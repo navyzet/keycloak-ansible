@@ -1,0 +1,68 @@
+- hosts: keycloak_server
+  vars:
+    certbot_auto_renew: true
+    certbot_auto_renew_options: "--quiet"
+    certbot_create_if_missing: true
+    certbot_admin_email: "{{ email }}"
+    certbot_create_standalone_stop_services: ['nginx']
+    certbot_auto_renew_user: root
+    certbot_certs:
+      - domains:
+          - "{{ inventory_hostname }}"
+    nginx_remove_default_vhost: false
+    nginx_upstreams:
+      - name: keycloak
+        servers: { "127.0.0.1:8080" }
+    nextcloud_dns_name: "{{ inventory_hostname }}"
+    nginx_vhosts:
+      - template: keycloak.conf
+        server_name: "{{ inventory_hostname }}"
+  become: true
+  roles:
+    - geerlingguy.nginx
+    - geerlingguy.certbot
+    - geerlingguy.docker
+
+  tasks:
+    - name: Install python3-docker
+      apt:
+        name: python3-docker
+
+    - name: "Create keycloak network"
+      community.docker.docker_network:
+        name: "keycloak"
+
+    - name: "Keycloak container"
+      docker_container:
+        name: keycloak
+        restart_policy: always
+        restart: yes
+        ports:
+          - "127.0.0.1:8080:8080/tcp"
+        image: "quay.io/keycloak/keycloak:24.0"
+        command: "start-dev --proxy=edge --proxy-headers=xforwarded --hostname-strict=false"
+        env:
+          KC_DB: postgres
+          KC_DB_USERNAME: user
+          KC_DB_PASSWORD: "{{ postgres_pass }}"
+          KC_DB_URL: "jdbc:postgresql://postgres:5432/keycloak"
+          KEYCLOAK_ADMIN: "{{ keycloak_admin }}"
+          KEYCLOAK_ADMIN_PASSWORD: "{{ keycloak_admin_pass }}"
+        networks:
+          - name: "keycloak"
+
+    - name: "Postgres container"
+      docker_container:
+        name: postgres
+        restart_policy: always
+        restart: yes
+        image: "postgres:16.3"
+        env:
+          PGDATA: /var/lib/postgresql/data/pgdata
+          POSTGRES_PASSWORD: "{{ postgres_pass }}"
+          POSTGRES_USER: user
+          POSTGRES_DB: keycloak
+        volumes:
+          - /var/lib/postgresql/data/:/var/lib/postgresql/data/
+        networks:
+        - name: "keycloak"
